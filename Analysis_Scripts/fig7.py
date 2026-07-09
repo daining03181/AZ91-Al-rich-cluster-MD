@@ -40,8 +40,7 @@ def default_outdir(script_dir: Path) -> Path:
     """
     Default output folder is github/Processed_Data if the script is in github.
     """
-    return script_dir / "Processed_Data"
-
+    return script_dir.parent / "Processed_Data"
 
 def validate_fig6_summary(df: pd.DataFrame, input_csv: Path) -> None:
     required_cols = {
