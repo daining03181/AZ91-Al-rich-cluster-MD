@@ -160,7 +160,7 @@ def main() -> None:
     parser.add_argument(
         "--outdir",
         default=None,
-        help="Output directory. Default: the Processed_Data folder next to this script.",
+        help="Output directory. Default: the Processed_Data folder in the project root.",
     )
 
     args = parser.parse_args()
