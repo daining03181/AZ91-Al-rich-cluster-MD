@@ -38,7 +38,7 @@ def find_default_input(script_dir: Path) -> Path:
 
 def default_outdir(script_dir: Path) -> Path:
     """
-    Default output folder is github/Processed_Data if the script is in github.
+    Default output folder is the Processed_Data folder in the project root.
     """
     return script_dir.parent / "Processed_Data"
 
