@@ -45,7 +45,7 @@ These files correspond to the Mg-Al-Zn MEAM potential reported by:
 
 Dickel D. E., Baskes M. I., Aslam I., Barrett C. D.  
 New interatomic potential for Mg-Al-Zn alloys with specific application to dilute Mg-based alloys.  
-Modelling and Simulation in Materials Science and Engineering, 2018, 26, 045010.
+Modelling and Simulation in Materials Science and Engineering, 2018, 26, 045010. https://iopscience.iop.org/article/10.1088/1361-651X/aabaad
 
 ## Data availability
 
