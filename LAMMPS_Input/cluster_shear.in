@@ -1,0 +1,718 @@
+# ============================================================
+#  AZ91 semi-solid Al-rich cluster simulations
+#  Solid-fraction-state scan + yz-shear-rate scan
+#  Cluster + transverse/non-flow diffusion version
+#
+#  Main production matrix:
+#    AZ91-fs20, T = 865 K
+#    AZ91-fs40, T = 852 K
+#    AZ91-fs60, T = 833 K
+#    AZ91-fs80, T = 813 K
+#    gdot = 0, 0.001, 0.005, 0.01, 0.02 ps^-1
+#
+#  Total cases: 4 fs states x 5 shear rates = 20
+#
+#  Unit conversion in LAMMPS units metal:
+#    0.001 ps^-1 = 1.0e9  s^-1
+#    0.005 ps^-1 = 5.0e9  s^-1
+#    0.010 ps^-1 = 1.0e10 s^-1
+#    0.020 ps^-1 = 2.0e10 s^-1
+#
+#  type 1 = Mg
+#  type 2 = Al
+#  type 3 = Zn
+#
+#  Notes:
+#  1. Shear plane/direction setting is yz because the model box is
+#     approximately x = 150 A, y = 200 A, z = 150 A.
+#  2. In LAMMPS, fix deform yz changes the yz tilt factor. This corresponds
+#     to a simple shear with flow along y and velocity gradient along z:
+#       v_y = gdot * z
+#  3. Under yz shear, total MSD is NOT used as a diffusion coefficient.
+#  4. Main diffusion descriptor is transverse/non-flow diffusion:
+#       D_perp = (MSD_x + MSD_z) / (4 t)
+#  5. y-direction non-affine MSD should be post-processed from trajectory.
+#  6. Shear production uses a fixed total engineering shear strain gamma = 0.5
+#     for all gdot > 0 cases. Therefore production time/steps depend on gdot:
+#       steps = gamma_target / (gdot * dt)
+#     For gdot = 0, the production time is set equal to the lowest-shear case.
+#  7. Production outputs are balanced to about 100 data points / trajectory frames
+#     for each case, so high-gdot short runs still have enough statistics.
+#  8. Three cluster definitions are output:
+#       c_cidRichAl  : main index, Al-rich Al core clusters.
+#       c_cidAlOnly  : conservative Al-only direct clusters.
+#       c_cidRegion  : auxiliary Al-rich affected-region clusters.
+#     The main analysis in the manuscript uses c_cidRichAl.
+# ============================================================
+
+# ------------------------------------------------------------
+# Loop variables: AZ91 fs-state scan + shear-rate scan
+# ------------------------------------------------------------
+# Estimated AZ91 temperatures from the previous AZ91D semi-solid setup:
+#   fs20 ~ 865 K
+#   fs40 ~ 852 K
+#   fs60 ~ 833 K
+#   fs80 ~ 813 K
+#
+# For each fs state, run gdot = 0, 0.001, 0.005, 0.01, 0.02 ps^-1.
+# This gives 20 cases in total.
+
+variable alloycase index AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91 AZ91
+variable wAlcase   index 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09 0.09
+variable wZncase   index 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01 0.01
+variable Tcase     index 865.0 865.0 865.0 865.0 865.0 852.0 852.0 852.0 852.0 852.0 833.0 833.0 833.0 833.0 833.0 813.0 813.0 813.0 813.0 813.0
+variable fscase    index fs20 fs20 fs20 fs20 fs20 fs40 fs40 fs40 fs40 fs40 fs60 fs60 fs60 fs60 fs60 fs80 fs80 fs80 fs80 fs80
+variable gdotcase  index 0.0 0.001 0.005 0.01 0.02 0.0 0.001 0.005 0.01 0.02 0.0 0.001 0.005 0.01 0.02 0.0 0.001 0.005 0.01 0.02
+
+# Production length is set by fixed total shear strain gamma = 0.5 for gdot > 0.
+# dt = 0.001 ps, so for gdot = 0.001, 0.005, 0.01, 0.02 ps^-1:
+# step_prod = 500000, 100000, 50000, 25000 respectively.
+# gdot = 0 uses 500000 steps as a no-shear time reference.
+variable stepProdCase   index 500000 500000 100000 50000 25000 500000 500000 100000 50000 25000 500000 500000 100000 50000 25000 500000 500000 100000 50000 25000
+
+# Balanced production output: about 100 averaged data points / dump frames per case.
+# Use Nrepeat = 10, Nfreq = 10 * Nevery.
+variable prodSampleCase index 500 500 100 50 25 500 500 100 50 25 500 500 100 50 25 500 500 100 50 25
+variable prodFreqCase   index 5000 5000 1000 500 250 5000 5000 1000 500 250 5000 5000 1000 500 250 5000 5000 1000 500 250
+
+label loop_cases
+
+clear
+
+shell mkdir -p ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}
+log ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/log.lammps
+
+print "============================================================"
+print "Starting case: ${alloycase}, ${fscase}, T = ${Tcase} K, gdot = ${gdotcase} ps^-1"
+print "Output folder: ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}"
+print "============================================================"
+
+# ============================================================
+# 0. Basic settings
+# ============================================================
+
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+timestep        0.001          # 1 fs = 0.001 ps
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+# ============================================================
+# 1. User-controlled parameters
+# ============================================================
+
+# Composition, given in weight fraction
+variable wAl equal ${wAlcase}
+variable wZn equal ${wZncase}
+
+# Run steps
+# 1 fs timestep:
+# 50000  steps = 50 ps
+# 100000 steps = 100 ps
+# 500000 steps = 500 ps
+variable step_relax    equal 50000
+variable step_heat     equal 100000
+variable step_preshear equal 100000
+variable step_prod     equal ${stepProdCase}
+
+# Shear rate in ps^-1
+variable gdot equal ${gdotcase}
+
+# Production total strain monitor. For gdot > 0, this should be 0.5.
+# For gdot = 0, this is 0 and the run is a no-shear time reference.
+variable gammaTotal equal v_gdot*v_step_prod*0.001
+
+# Output interval
+variable thermoStep equal 1000
+variable dumpStep   equal 5000       # heating/pre-production dump interval
+
+# Balanced production output interval.
+# Roughly 100 output points for every production case.
+variable prodSample  equal ${prodSampleCase}
+variable prodRepeat  equal 10
+variable prodFreq    equal ${prodFreqCase}
+variable dumpProdStep equal ${prodFreqCase}
+
+# Local Al-rich cluster parameters
+# rLoc: local concentration radius, Angstrom.
+# rConnRegion: connectivity cutoff for the auxiliary Al-rich affected region.
+# rConnAl: connectivity cutoff for Al-related clusters. It should ideally be
+#          calibrated from the first minimum of the Al-Al RDF.
+# ptmCut: PTM RMSD cutoff.
+variable ptmCut      equal 0.15
+variable rLoc        equal 5.0
+variable rConnRegion equal 4.0
+variable rConnAl     equal 3.5
+
+# Al-rich criterion:
+# etaAl = xAl_local / xAl_bulk
+variable etaCut   equal 2.0
+variable minNeigh equal 6
+
+# RDF bins
+variable rdfBins equal 200
+
+print "Production control:"
+print "step_prod = ${step_prod}, gdot = ${gdot} ps^-1, gamma_total = ${gammaTotal}"
+print "production ave/time: Nevery = ${prodSample}, Nrepeat = ${prodRepeat}, Nfreq = ${prodFreq}"
+print "production dump interval = ${dumpProdStep}"
+print "cluster cutoffs: rLoc = ${rLoc}, rConnAl = ${rConnAl}, rConnRegion = ${rConnRegion}"
+
+# ============================================================
+# 2. Convert wt.% to at.%
+# ============================================================
+
+variable nMg  equal (1.0-v_wAl-v_wZn)/24.305
+variable nAl0 equal v_wAl/26.9815385
+variable nZn0 equal v_wZn/65.38
+
+variable xMg equal v_nMg/(v_nMg+v_nAl0+v_nZn0)
+variable xAl equal v_nAl0/(v_nMg+v_nAl0+v_nZn0)
+variable xZn equal v_nZn0/(v_nMg+v_nAl0+v_nZn0)
+
+# Sequential replacement:
+# First Mg -> Al, then remaining Mg -> Zn
+variable rAl equal v_xAl
+variable rZn equal v_xZn/(1.0-v_xAl)
+
+print "Target composition:"
+print "Alloy = ${alloycase}"
+print "wAl = ${wAl}, wZn = ${wZn}"
+print "Converted atomic fractions:"
+print "xMg = ${xMg}, xAl = ${xAl}, xZn = ${xZn}"
+print "Replacement ratios:"
+print "rAl = ${rAl}, rZn = ${rZn}"
+
+# ============================================================
+# 3. Read initial pure Mg model
+# ============================================================
+
+read_data Mg-150-200-150-10.lmp
+
+# IMPORTANT:
+# Your data file must allow 3 atom types.
+# If the header says "1 atom types", change it to "3 atom types".
+
+mass 1 24.305
+mass 2 26.9815385
+mass 3 65.38
+
+# ============================================================
+# 4. Random substitution: Mg -> Al/Zn
+# ============================================================
+# Same seeds are used for all shear-rate cases, so the initial alloy
+# distribution is identical among gdot cases. This improves comparison.
+
+set type 1 type/ratio 2 ${rAl} 28793
+set type 1 type/ratio 3 ${rZn} 15214
+
+group Mg type 1
+group Al type 2
+group Zn type 3
+
+variable nMgActual  equal count(Mg)
+variable nAlActual  equal count(Al)
+variable nZnActual  equal count(Zn)
+variable nAllActual equal count(all)
+
+variable xMgActual equal v_nMgActual/v_nAllActual
+variable xAlActual equal v_nAlActual/v_nAllActual
+variable xZnActual equal v_nZnActual/v_nAllActual
+
+print "Actual atom numbers:"
+print "N_Mg  = ${nMgActual}"
+print "N_Al  = ${nAlActual}"
+print "N_Zn  = ${nZnActual}"
+print "N_all = ${nAllActual}"
+
+print "Actual atomic fractions:"
+print "xMg_actual = ${xMgActual}"
+print "xAl_actual = ${xAlActual}"
+print "xZn_actual = ${xZnActual}"
+
+# ============================================================
+# 5. Potential
+# ============================================================
+
+pair_style meam
+pair_coeff * * library.meam Mg Al Zn Mg-Al-Zn.meam Mg Al Zn
+
+# Make ghost communication cutoff large enough for local concentration and cluster analysis
+comm_modify cutoff 8
+
+# ============================================================
+# 6. Analysis computes and variables
+# ============================================================
+
+# ---------- Per-atom potential energy ----------
+compute peAtom all pe/atom
+
+# ---------- RDF ----------
+# Pair list:
+# Mg-Mg, Mg-Al, Mg-Zn, Al-Al, Al-Zn, Zn-Zn
+compute rdfAll all rdf ${rdfBins} 1 1 1 2 1 3 2 2 2 3 3 3
+
+# ---------- Local chemical environment ----------
+compute coordAll all coord/atom cutoff ${rLoc}
+compute coordMg  all coord/atom cutoff ${rLoc} 1
+compute coordAl  all coord/atom cutoff ${rLoc} 2
+compute coordZn  all coord/atom cutoff ${rLoc} 3
+
+# Central atom type flag
+variable isAl atom "type==2"
+
+# Local Al concentration:
+# xAlLoc = (Al neighbors + central atom if Al) / (all neighbors + central atom)
+variable xAlLoc atom "(c_coordAl + v_isAl)/(c_coordAll + 1.0)"
+
+# Al enrichment factor:
+# etaAl = local Al concentration / bulk Al concentration
+variable etaAl atom "v_xAlLoc/v_xAlActual"
+
+# Al-rich region definition:
+# isRichRegion includes all atoms located in Al-rich local environment
+# isRichAl includes only Al atoms located in Al-rich local environment
+variable isRichRegion atom "(v_etaAl >= v_etaCut) && (c_coordAll >= v_minNeigh)"
+variable isRichAl     atom "(type==2) && (v_etaAl >= v_etaCut) && (c_coordAll >= v_minNeigh)"
+variable isMatrix     atom "1.0 - v_isRichRegion"
+
+group RichRegion dynamic all var isRichRegion every 100
+group RichAl     dynamic all var isRichAl every 100
+
+# ---------- Cluster identification ----------
+# Main definition for this thesis work:
+#   Al-rich Al core clusters = Al atoms located in Al-enriched local environments.
+#   This avoids Mg/Zn bridge atoms connecting many enriched areas into one giant cluster.
+# Auxiliary definitions:
+#   cidAlOnly  : direct Al-Al spatial clustering, conservative reference.
+#   cidRegion  : Al-rich affected-region clustering, useful for percolation/affected-zone discussion only.
+# Detailed cluster size and lifetime should be post-processed from these per-atom cluster IDs.
+compute cidRichAl RichAl cluster/atom ${rConnAl}
+#compute cidAlOnly Al cluster/atom ${rConnAl}
+#compute cidRegion RichRegion cluster/atom ${rConnRegion}
+
+# ---------- PTM structure identification ----------
+# PTM type:
+# 0 = unknown
+# 1 = FCC
+# 2 = HCP
+# 3 = BCC
+# 4 = ICO
+# 5 = SC
+# 6 = DCUB
+# 7 = DHEX
+# -1 = atoms not in group
+compute ptmAtom all ptm/atom default ${ptmCut} all
+
+variable ptmType atom "c_ptmAtom[1]"
+variable ptmRMSD atom "c_ptmAtom[2]"
+
+variable isFCC     atom "v_ptmType==1"
+variable isHCP     atom "v_ptmType==2"
+variable isBCC     atom "v_ptmType==3"
+variable isICO     atom "v_ptmType==4"
+variable isUnknown atom "v_ptmType==0"
+
+# solid-like = FCC + HCP
+variable isSolid atom "(v_ptmType==1) || (v_ptmType==2)"
+
+# Al-rich region structure
+variable isRichSolid   atom "v_isRichRegion*v_isSolid"
+variable isRichUnknown atom "v_isRichRegion*v_isUnknown"
+
+# ---------- Energy partition ----------
+variable peRichAtom   atom "c_peAtom*v_isRichRegion"
+variable peMatrixAtom atom "c_peAtom*v_isMatrix"
+variable peSolidAtom  atom "c_peAtom*v_isSolid"
+
+# ---------- Scalar statistics ----------
+compute nRichRegion all reduce sum v_isRichRegion
+compute nRichAl     all reduce sum v_isRichAl
+
+compute avgXAlLoc   all reduce ave v_xAlLoc
+compute avgEtaAl    all reduce ave v_etaAl
+
+compute nFCC        all reduce sum v_isFCC
+compute nHCP        all reduce sum v_isHCP
+compute nBCC        all reduce sum v_isBCC
+compute nICO        all reduce sum v_isICO
+compute nUnknown    all reduce sum v_isUnknown
+compute nSolid      all reduce sum v_isSolid
+
+compute nRichSolid   all reduce sum v_isRichSolid
+compute nRichUnknown all reduce sum v_isRichUnknown
+
+compute sumPeRich   all reduce sum v_peRichAtom
+compute sumPeMatrix all reduce sum v_peMatrixAtom
+compute sumPeSolid  all reduce sum v_peSolidAtom
+compute sumPeAll    all reduce sum c_peAtom
+
+variable fRichRegion equal c_nRichRegion/count(all)
+variable fRichAlOfAl equal c_nRichAl/count(Al)
+variable fSolid      equal c_nSolid/count(all)
+variable fHCP        equal c_nHCP/count(all)
+variable fFCC        equal c_nFCC/count(all)
+variable fUnknown    equal c_nUnknown/count(all)
+
+variable nMatrix equal count(all)-c_nRichRegion
+variable peRichAve equal "ternary(c_nRichRegion > 0, c_sumPeRich/c_nRichRegion, 0.0)"
+variable peMatrixAve equal "ternary(v_nMatrix > 0, c_sumPeMatrix/v_nMatrix, 0.0)"
+variable dPeRichMatrix equal "v_peRichAve-v_peMatrixAve"
+
+# ============================================================
+# 7. Thermo output
+# ============================================================
+
+thermo ${thermoStep}
+thermo_style custom step temp press pyz pe ke etotal vol density &
+    v_fSolid v_fHCP v_fFCC v_fUnknown &
+    c_nRichRegion v_fRichRegion c_nRichAl v_fRichAlOfAl &
+    c_avgXAlLoc c_avgEtaAl &
+    c_nRichSolid c_nRichUnknown &
+    v_peRichAve v_peMatrixAve v_dPeRichMatrix
+
+# ============================================================
+# 8. Initial random-solution snapshot
+# ============================================================
+
+dump dinit all custom 1 ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/snapshot.initial_random.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.lammpstrj &
+    id type x y z &
+    c_peAtom v_ptmType v_ptmRMSD &
+    c_coordAll c_coordMg c_coordAl c_coordZn &
+    v_xAlLoc v_etaAl v_isRichRegion v_isRichAl &
+    c_cidRichAl
+
+dump_modify dinit sort id
+run 0
+undump dinit
+
+write_data ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/initial_random.data
+
+# ============================================================
+# 9. Energy minimization
+# ============================================================
+
+min_style fire
+minimize 1e-10 1e-10 10000 10000
+
+write_data ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/minimized.data
+
+reset_timestep 0
+velocity all create 300.0 4928459 mom yes rot yes dist gaussian
+
+# ============================================================
+# 10. 300 K relaxation
+# ============================================================
+
+fix relax all npt temp 300.0 300.0 0.1 iso 0.0 0.0 1.0
+run ${step_relax}
+unfix relax
+
+write_data ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/relaxed_300K.data
+
+dump drelax all custom 1 ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/snapshot.relaxed_300K.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.lammpstrj &
+    id type x y z &
+    c_peAtom v_ptmType v_ptmRMSD &
+    c_coordAll c_coordMg c_coordAl c_coordZn &
+    v_xAlLoc v_etaAl v_isRichRegion v_isRichAl &
+    c_cidRichAl
+
+dump_modify drelax sort id
+run 0
+undump drelax
+
+# ============================================================
+# 11. Heating stage: 300 K -> target T
+# ============================================================
+
+compute msdMgHeat Mg msd com yes
+compute msdAlHeat Al msd com yes
+compute msdZnHeat Zn msd com yes
+
+fix msdHeat all ave/time 1000 10 10000 &
+    c_msdMgHeat[1] c_msdMgHeat[2] c_msdMgHeat[3] c_msdMgHeat[4] &
+    c_msdAlHeat[1] c_msdAlHeat[2] c_msdAlHeat[3] c_msdAlHeat[4] &
+    c_msdZnHeat[1] c_msdZnHeat[2] c_msdZnHeat[3] c_msdZnHeat[4] &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/msd.heat.components.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat
+
+fix rdfHeat all ave/time 100 10 1000 c_rdfAll[*] &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/rdf.heat.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat mode vector
+
+fix statHeat all ave/time 1000 10 10000 &
+    v_fSolid v_fHCP v_fFCC v_fUnknown &
+    c_nRichRegion v_fRichRegion c_nRichAl v_fRichAlOfAl &
+    c_avgXAlLoc c_avgEtaAl &
+    c_nRichSolid c_nRichUnknown &
+    c_sumPeRich c_sumPeMatrix c_sumPeSolid c_sumPeAll &
+    v_peRichAve v_peMatrixAve v_dPeRichMatrix &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/stat.heat.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat
+
+dump dheat all custom ${dumpStep} ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/dump.heat.Alrich.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.lammpstrj &
+    id type x y z xu yu zu ix iy iz vx vy vz &
+    c_peAtom v_ptmType v_ptmRMSD &
+    c_coordAll c_coordMg c_coordAl c_coordZn &
+    v_xAlLoc v_etaAl v_isRichRegion v_isRichAl &
+    c_cidRichAl
+
+dump_modify dheat sort id
+
+fix heat all npt temp 300.0 ${Tcase} 0.1 iso 0.0 0.0 1.0
+run ${step_heat}
+unfix heat
+
+undump dheat
+unfix statHeat
+unfix rdfHeat
+unfix msdHeat
+
+uncompute msdMgHeat
+uncompute msdAlHeat
+uncompute msdZnHeat
+
+write_data ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/heated_T${Tcase}.data
+
+# ============================================================
+# 12. Pre-production equilibrium at target T, zero pressure
+# ============================================================
+# This stage prepares an equilibrium configuration before production.
+# All gdot cases have the same composition and thermal history up to here.
+
+compute msdMgPre Mg msd com yes
+compute msdAlPre Al msd com yes
+compute msdZnPre Zn msd com yes
+
+fix msdPre all ave/time 1000 10 10000 &
+    c_msdMgPre[1] c_msdMgPre[2] c_msdMgPre[3] c_msdMgPre[4] &
+    c_msdAlPre[1] c_msdAlPre[2] c_msdAlPre[3] c_msdAlPre[4] &
+    c_msdZnPre[1] c_msdZnPre[2] c_msdZnPre[3] c_msdZnPre[4] &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/msd.preprod.components.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat
+
+fix rdfPre all ave/time 100 10 1000 c_rdfAll[*] &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/rdf.preprod.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat mode vector
+
+fix statPre all ave/time 1000 10 10000 &
+    v_fSolid v_fHCP v_fFCC v_fUnknown &
+    c_nRichRegion v_fRichRegion c_nRichAl v_fRichAlOfAl &
+    c_avgXAlLoc c_avgEtaAl &
+    c_nRichSolid c_nRichUnknown &
+    c_sumPeRich c_sumPeMatrix c_sumPeSolid c_sumPeAll &
+    v_peRichAve v_peMatrixAve v_dPeRichMatrix &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/stat.preprod.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat
+
+dump dpre all custom ${dumpStep} ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/dump.preprod.Alrich.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.lammpstrj &
+    id type x y z xu yu zu ix iy iz vx vy vz &
+    c_peAtom v_ptmType v_ptmRMSD &
+    c_coordAll c_coordMg c_coordAl c_coordZn &
+    v_xAlLoc v_etaAl v_isRichRegion v_isRichAl &
+    c_cidRichAl
+
+dump_modify dpre sort id
+
+fix preprod all npt temp ${Tcase} ${Tcase} 0.1 iso 0.0 0.0 1.0
+run ${step_preshear}
+unfix preprod
+
+undump dpre
+unfix statPre
+unfix rdfPre
+unfix msdPre
+
+uncompute msdMgPre
+uncompute msdAlPre
+uncompute msdZnPre
+
+write_data ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/preprod_equil.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.data
+
+# ============================================================
+# 13. Choose production mode
+# ============================================================
+# gdot = 0: no-shear NVT production, standard reference case.
+# gdot > 0: shear-NEMD production using fix deform + fix nvt/sllod.
+
+if "${gdot} == 0.0" then "jump SELF production_noshear"
+jump SELF production_shear
+
+# ============================================================
+# 14A. No-shear production stage, gdot = 0
+# ============================================================
+
+label production_noshear
+
+print "Running no-shear NVT production at T = ${Tcase} K"
+
+reset_timestep 0
+
+compute Tprod all temp
+thermo_modify temp Tprod
+
+compute msdMgProd Mg msd com yes
+compute msdAlProd Al msd com yes
+compute msdZnProd Zn msd com yes
+
+variable elapsed_ps equal step*dt
+# For comparison with sheared cases, transverse/non-flow diffusion is still reported.
+# For yz shear, the flow direction is y; use x and z components.
+# In the no-shear case, total 3D diffusivity can also be estimated by MSD_total/(6t).
+variable DperpMg equal "(c_msdMgProd[1]+c_msdMgProd[3])/(4.0*v_elapsed_ps)"
+variable DperpAl equal "(c_msdAlProd[1]+c_msdAlProd[3])/(4.0*v_elapsed_ps)"
+variable DperpZn equal "(c_msdZnProd[1]+c_msdZnProd[3])/(4.0*v_elapsed_ps)"
+variable D3DMg   equal "c_msdMgProd[4]/(6.0*v_elapsed_ps)"
+variable D3DAl   equal "c_msdAlProd[4]/(6.0*v_elapsed_ps)"
+variable D3DZn   equal "c_msdZnProd[4]/(6.0*v_elapsed_ps)"
+
+fix msdProd all ave/time ${prodSample} ${prodRepeat} ${prodFreq} &
+    c_msdMgProd[1] c_msdMgProd[2] c_msdMgProd[3] c_msdMgProd[4] v_DperpMg v_D3DMg &
+    c_msdAlProd[1] c_msdAlProd[2] c_msdAlProd[3] c_msdAlProd[4] v_DperpAl v_D3DAl &
+    c_msdZnProd[1] c_msdZnProd[2] c_msdZnProd[3] c_msdZnProd[4] v_DperpZn v_D3DZn &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/msd.production.components.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat
+
+fix rdfProd all ave/time ${prodSample} ${prodRepeat} ${prodFreq} c_rdfAll[*] &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/rdf.production.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat mode vector
+
+fix statProd all ave/time ${prodSample} ${prodRepeat} ${prodFreq} &
+    v_fSolid v_fHCP v_fFCC v_fUnknown &
+    c_nRichRegion v_fRichRegion c_nRichAl v_fRichAlOfAl &
+    c_avgXAlLoc c_avgEtaAl &
+    c_nRichSolid c_nRichUnknown &
+    c_sumPeRich c_sumPeMatrix c_sumPeSolid c_sumPeAll &
+    v_peRichAve v_peMatrixAve v_dPeRichMatrix &
+    v_DperpMg v_DperpAl v_DperpZn v_D3DMg v_D3DAl v_D3DZn &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/stat.production.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat
+
+dump dprod all custom ${dumpProdStep} ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/dump.production.Alrich.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.lammpstrj &
+    id type x y z xu yu zu ix iy iz vx vy vz &
+    c_peAtom v_ptmType v_ptmRMSD &
+    c_coordAll c_coordMg c_coordAl c_coordZn &
+    v_xAlLoc v_etaAl v_isRichRegion v_isRichAl &
+    c_cidRichAl
+
+dump_modify dprod sort id first yes
+
+fix prod_nvt all nvt temp ${Tcase} ${Tcase} 0.1
+run ${step_prod}
+unfix prod_nvt
+
+undump dprod
+unfix statProd
+unfix rdfProd
+unfix msdProd
+
+uncompute msdMgProd
+uncompute msdAlProd
+uncompute msdZnProd
+thermo_modify temp thermo_temp
+uncompute Tprod
+
+write_data ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/final_production.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.data
+
+jump SELF case_end
+
+# ============================================================
+# 14B. Shear-NEMD production stage, gdot > 0
+# ============================================================
+
+label production_shear
+
+print "Running shear-NEMD production at T = ${Tcase} K, gdot = ${gdot} ps^-1"
+
+# Simple shear in the yz plane: vy = gdot * z, implemented by yz box tilt.
+# This matches the user's box geometry: y is the long axis (~200 A),
+# while x and z are ~150 A.
+# For NEMD with fix nvt/sllod, use fix deform remap v.
+# Do NOT use total MSD as a diffusion coefficient under shear:
+# y and total MSD contain affine flow. Use x/z transverse MSD,
+# and compute non-affine y-MSD by post-processing if needed.
+
+change_box all triclinic remap
+reset_timestep 0
+
+fix deformShear all deform 1 yz erate ${gdot} remap v units box
+compute Tdeform all temp/deform
+thermo_modify temp Tdeform
+
+compute msdMgProd Mg msd com yes
+compute msdAlProd Al msd com yes
+compute msdZnProd Zn msd com yes
+
+variable elapsed_ps equal step*dt
+# Transverse/non-flow diffusion estimator in Angstrom^2/ps for yz shear:
+# D_perp = (MSD_x + MSD_z)/(4t). Use only the linear regime in post-fitting.
+variable DperpMg equal "(c_msdMgProd[1]+c_msdMgProd[3])/(4.0*v_elapsed_ps)"
+variable DperpAl equal "(c_msdAlProd[1]+c_msdAlProd[3])/(4.0*v_elapsed_ps)"
+variable DperpZn equal "(c_msdZnProd[1]+c_msdZnProd[3])/(4.0*v_elapsed_ps)"
+
+# These are printed only for diagnostic reference; do NOT use D3D under shear.
+variable D3DMg   equal "c_msdMgProd[4]/(6.0*v_elapsed_ps)"
+variable D3DAl   equal "c_msdAlProd[4]/(6.0*v_elapsed_ps)"
+variable D3DZn   equal "c_msdZnProd[4]/(6.0*v_elapsed_ps)"
+
+fix msdProd all ave/time ${prodSample} ${prodRepeat} ${prodFreq} &
+    c_msdMgProd[1] c_msdMgProd[2] c_msdMgProd[3] c_msdMgProd[4] v_DperpMg v_D3DMg &
+    c_msdAlProd[1] c_msdAlProd[2] c_msdAlProd[3] c_msdAlProd[4] v_DperpAl v_D3DAl &
+    c_msdZnProd[1] c_msdZnProd[2] c_msdZnProd[3] c_msdZnProd[4] v_DperpZn v_D3DZn &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/msd.production.components.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat
+
+fix rdfProd all ave/time ${prodSample} ${prodRepeat} ${prodFreq} c_rdfAll[*] &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/rdf.production.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat mode vector
+
+fix statProd all ave/time ${prodSample} ${prodRepeat} ${prodFreq} &
+    v_fSolid v_fHCP v_fFCC v_fUnknown &
+    c_nRichRegion v_fRichRegion c_nRichAl v_fRichAlOfAl &
+    c_avgXAlLoc c_avgEtaAl &
+    c_nRichSolid c_nRichUnknown &
+    c_sumPeRich c_sumPeMatrix c_sumPeSolid c_sumPeAll &
+    v_peRichAve v_peMatrixAve v_dPeRichMatrix &
+    v_DperpMg v_DperpAl v_DperpZn v_D3DMg v_D3DAl v_D3DZn &
+    file ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/stat.production.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.dat
+
+# Full trajectory dump for post-processing:
+# xu/yu/zu and image flags are included so non-affine MSD and cluster lifetime
+# tracking can be done outside LAMMPS.
+dump dprod all custom ${dumpProdStep} ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/dump.production.Alrich.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.lammpstrj &
+    id type x y z xu yu zu ix iy iz vx vy vz &
+    c_peAtom v_ptmType v_ptmRMSD &
+    c_coordAll c_coordMg c_coordAl c_coordZn &
+    v_xAlLoc v_etaAl v_isRichRegion v_isRichAl &
+    c_cidRichAl
+
+dump_modify dprod sort id first yes
+
+fix prod_sllod all nvt/sllod temp ${Tcase} ${Tcase} 0.1
+run ${step_prod}
+unfix prod_sllod
+
+undump dprod
+unfix statProd
+unfix rdfProd
+unfix msdProd
+
+uncompute msdMgProd
+uncompute msdAlProd
+uncompute msdZnProd
+thermo_modify temp thermo_temp
+uncompute Tdeform
+unfix deformShear
+
+write_data ${alloycase}_${fscase}_T${Tcase}_shearYZ_gdot${gdotcase}/final_production.${alloycase}.${fscase}.T${Tcase}.gdot${gdotcase}.data
+
+jump SELF case_end
+
+# ============================================================
+# 15. Case end and next loop
+# ============================================================
+
+label case_end
+
+print "============================================================"
+print "Finished case: ${alloycase}, ${fscase}, T = ${Tcase} K, gdot = ${gdotcase} ps^-1"
+print "============================================================"
+
+next alloycase wAlcase wZncase Tcase fscase gdotcase stepProdCase prodSampleCase prodFreqCase
+jump SELF loop_cases
+
+print "============================================================"
+print "AZ91 fs20/fs40/fs60/fs80 yz-shear-rate scan finished."
+print "============================================================"
