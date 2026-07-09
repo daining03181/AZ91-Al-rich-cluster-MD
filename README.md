@@ -6,19 +6,19 @@ This repository contains the processed data, LAMMPS input files, interatomic pot
 
 ## Repository structure
 
-- `LAMMPS_Input/`
+- `LAMMPS_Input`
   - LAMMPS input script and initial atomic structure used for the semisolid AZ91 shear simulations.
 
-- `Potential/`
+- `Potential`
   - MEAM potential files used in the simulations.
 
-- `Analysis_Scripts/`
+- `Analysis_Scripts`
   - Post-processing scripts for local Al enrichment, Al-rich core cluster statistics, potential energy analysis, RDF and coordination analysis, and diffusion analysis.
 
-- `Processed_Data/`
+- `Processed_Data`
   - Processed data used to reproduce the figures and statistical results in the manuscript.
 
-- `Supplementary_Data/`
+- `Supplementary_Data`
   - Data related to supplementary tables and parameter sensitivity analyses.
 
 ## Simulation details
