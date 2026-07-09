@@ -12,14 +12,6 @@ numpy
 pandas
 ```
 
-The supplementary sensitivity-analysis scripts require OVITO Python support:
-
-```text
-ovito
-```
-
-`figS1.py` and `figS2.py` should be run in an OVITO-compatible Python or conda environment.
-
 ## Script descriptions
 
 ### `fig4.py`
@@ -184,53 +176,6 @@ Output:
 Fig11_al_diffusion_coefficients.csv
 ```
 
-### `figS1.py`
-
-Extracts sensitivity-analysis data for Al-rich local-environment identification.
-
-Input:
-
-```text
-dump.production.Alrich*.lammpstrj
-```
-
-Analysis:
-
-- Uses the `fs = 40%` cases.
-- Tests the sensitivity of the Al-rich local environment fraction to different local-neighbor radii and Al-enrichment thresholds.
-- Uses OVITO neighbor searching through `CutoffNeighborFinder`.
-
-Output:
-
-```text
-FigS1_raw_frame_results.csv
-FigS1_summary.csv
-```
-
-### `figS2.py`
-
-Extracts sensitivity-analysis data for Al-rich core-cluster statistics.
-
-Input:
-
-```text
-dump.production.Alrich*.lammpstrj
-```
-
-Analysis:
-
-- Uses the `fs = 40%` cases.
-- Identifies Al-rich core atoms using the same local-environment criterion as the main analysis.
-- Tests the sensitivity of cluster number and maximum cluster size to different cluster connection cutoffs and minimum cluster sizes.
-- Uses OVITO neighbor searching and a union-find clustering algorithm.
-
-Output:
-
-```text
-FigS2_raw_frame_results.csv
-FigS2_summary.csv
-```
-
 ## Running order
 
 Run the scripts from the project root directory containing the simulation folders.
@@ -248,19 +193,6 @@ python Analysis_Scripts\fig11.py --root . --out Processed_Data\Fig11_al_diffusio
 
 `fig7.py` should be run after `fig6.py`, because it uses `Fig6_shear_statistics_last20_summary.csv` as input.
 
-## Supplementary scripts
-
-Run `figS1.py` and `figS2.py` in the OVITO environment:
-
-```bat
-conda activate your_ovito_environment
-
-python Analysis_Scripts\figS1.py --root . --outdir Processed_Data --workers 5 --last-n-frames 20
-python Analysis_Scripts\figS2.py --root . --outdir Processed_Data --workers 5 --last-n-frames 20
-```
-
-Replace `your_ovito_environment` with the actual environment name.
-
 ## Notes
 
 The default analysis settings are consistent with the manuscript:
@@ -270,8 +202,6 @@ The default analysis settings are consistent with the manuscript:
 - Strong Al-rich local environment: `eta_Al >= 3.0`.
 - Minimum neighbor number: `MIN_NEIGH = 6`.
 - Main Al-rich core-cluster threshold: `N_min = 5`.
-- Fig. S1 tests the sensitivity to `r_loc` and `eta_Al`.
-- Fig. S2 tests the sensitivity to `r_conn` and `N_min`.
 - Fig. 10 uses RDF data to quantify local Al-Al correlations.
 - Fig. 11 reports `D_perp_Al` and `D3D_deshear_Al`.
 
